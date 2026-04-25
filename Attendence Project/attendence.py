@@ -16,6 +16,8 @@ db = firestore.client()
 import cv2  # type: ignore
 import numpy as np  # type: ignore
 import os
+# ফোল্ডার থাকলে এরর দেবে না, না থাকলে নতুন তৈরি করবে
+os.makedirs("student_faces", exist_ok=True)
 import pandas as pd  # type: ignore
 from datetime import datetime
 
