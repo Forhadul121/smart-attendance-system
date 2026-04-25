@@ -3,3 +3,4 @@ opencv-contrib-python-headless
 numpy
 pandas
 firebase-admin
+pip install pytz
