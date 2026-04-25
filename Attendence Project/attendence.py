@@ -1,3 +1,16 @@
+import firebase_admin
+from firebase_admin import credentials
+from firebase_admin import firestore
+
+# Connect to Firebase securely using Streamlit Secrets
+if not firebase_admin._apps:
+    # Convert Streamlit secrets to a dictionary that Firebase can read
+    firebase_secrets = dict(st.secrets["firebase"])
+    cred = credentials.Certificate(firebase_secrets)
+    firebase_admin.initialize_app(cred)
+
+# Create the database connection variable
+db = firestore.client()
 import streamlit as st  # type: ignore
 import cv2  # type: ignore
 import numpy as np  # type: ignore
