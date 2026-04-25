@@ -1,3 +1,4 @@
+import streamlit as st  # type: ignore
 import firebase_admin
 from firebase_admin import credentials
 from firebase_admin import firestore
@@ -11,7 +12,7 @@ if not firebase_admin._apps:
 
 # Create the database connection variable
 db = firestore.client()
-import streamlit as st  # type: ignore
+
 import cv2  # type: ignore
 import numpy as np  # type: ignore
 import os
