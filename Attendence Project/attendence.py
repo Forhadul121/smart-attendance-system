@@ -1,11 +1,18 @@
-import streamlit as st  # type: ignore
+import streamlit as st
 import firebase_admin
 from firebase_admin import credentials
 from firebase_admin import firestore
+import cv2
+import numpy as np
+import os
+import pandas as pd
+from datetime import datetime
 
-# Connect to Firebase securely using Streamlit Secrets
+# 1. Page Config Setup
+st.set_page_config(page_title="Universal Attendance", layout="centered")
+
+# 2. Connect to Firebase securely
 if not firebase_admin._apps:
-    # Convert Streamlit secrets to a dictionary that Firebase can read
     firebase_secrets = dict(st.secrets["firebase"])
     cred = credentials.Certificate(firebase_secrets)
     firebase_admin.initialize_app(cred)
@@ -13,29 +20,17 @@ if not firebase_admin._apps:
 # Create the database connection variable
 db = firestore.client()
 
-import cv2  # type: ignore
-import numpy as np  # type: ignore
-import os
-# ফোল্ডার থাকলে এরর দেবে না, না থাকলে নতুন তৈরি করবে
-os.makedirs("student_faces", exist_ok=True)
-import pandas as pd  # type: ignore
-from datetime import datetime
-
-st.set_page_config(page_title="Python Attendance System")
-
-# Setup directories
+# 3. Setup directories
 DATA_DIR = "student_faces"
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
+os.makedirs(DATA_DIR, exist_ok=True)
 
-# Load the Face Detector (Built into OpenCV)
+# 4. Load the Face Detector and Recognizer
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-# Use LBPH Face Recognizer (Doesn't need dlib/CMake)
 recognizer = cv2.face.LBPHFaceRecognizer_create()
 
-st.set_page_config(page_title="Universal Attendance", layout="centered")
 st.title("📲 Smart Attendance")
 
+# 5. Sidebar Menu
 menu = ["Take Attendance", "Register Student", "Admin Dashboard"]
 choice = st.sidebar.selectbox("Navigation", menu)
 
@@ -59,7 +54,7 @@ if choice == "Register Student":
             if len(faces) > 0:
                 for (x, y, w, h) in faces:
                     face_roi = gray[y:y+h, x:x+w]
-                    # Save as ID.Name.jpg
+                    # Save as ID.Name.jpg locally for training
                     cv2.imwrite(f"{DATA_DIR}/{id_num}.{name}.jpg", face_roi)
                 st.success(f"Profile created for {name}!")
             else:
@@ -69,7 +64,7 @@ if choice == "Register Student":
 elif choice == "Take Attendance":
     st.subheader("Attendance Scanner")
     
-    # 1. Train the recognizer on saved images
+    # Train the recognizer on saved images
     faces, ids, name_map = [], [], {}
     for file in os.listdir(DATA_DIR):
         if file.endswith(".jpg"):
@@ -84,7 +79,7 @@ elif choice == "Take Attendance":
     else:
         recognizer.train(faces, np.array(ids))
         
-        # 2. Capture Live Image
+        # Capture Live Image
         img_file = st.camera_input("Scan for Attendance")
         if img_file:
             file_bytes = np.asarray(bytearray(img_file.read()), dtype=np.uint8)
@@ -95,25 +90,46 @@ elif choice == "Take Attendance":
             for (x, y, w, h) in found_faces:
                 id_predicted, confidence = recognizer.predict(gray[y:y+h, x:x+w])
                 
-                # Lower confidence score is better in LBPH
                 if confidence < 70:
-                    student_name = name_map[id_predicted]
+                    student_name = name_map.get(id_predicted, "Unknown")
                     st.success(f"✅ Present: {student_name} (Match: {round(100 - confidence)}%)")
                     
-                    # Log to CSV
-                    log_file = f"attendance_{datetime.now().strftime('%Y-%m-%d')}.csv"
-                    log_data = pd.DataFrame([{"ID": id_predicted, "Name": student_name, "Time": datetime.now().strftime("%H:%M:%S")}])
-                    log_data.to_csv(log_file, mode='a', index=False, header=not os.path.exists(log_file))
+                    # LOG TO FIREBASE FIRESTORE
+                    today_date = datetime.now().strftime('%Y-%m-%d')
+                    current_time = datetime.now().strftime("%H:%M:%S")
+                    
+                    # Create a unique document ID for this student today
+                    doc_id = f"{today_date}_{id_predicted}"
+                    
+                    doc_ref = db.collection('attendance_logs').document(doc_id)
+                    doc_ref.set({
+                        "ID": id_predicted,
+                        "Name": student_name,
+                        "Date": today_date,
+                        "Time": current_time
+                    })
                 else:
                     st.error("Unknown Face Detected.")
 
 # --- MODE: Admin Dashboard ---
 elif choice == "Admin Dashboard":
-    st.subheader("Attendance Records")
-    log_file = f"attendance_{datetime.now().strftime('%Y-%m-%d')}.csv"
-    if os.path.exists(log_file):
-        df = pd.read_csv(log_file).drop_duplicates(subset=['ID'], keep='first')
+    st.subheader("Attendance Records (Firebase)")
+    today_date = datetime.now().strftime('%Y-%m-%d')
+    
+    # READ FROM FIREBASE FIRESTORE
+    logs_ref = db.collection('attendance_logs').where("Date", "==", today_date).stream()
+    
+    records = []
+    for doc in logs_ref:
+        records.append(doc.to_dict())
+        
+    if records:
+        df = pd.DataFrame(records)
+        # Reorder columns to look nice
+        df = df[["ID", "Name", "Date", "Time"]]
         st.table(df)
-        st.download_button("Download CSV", df.to_csv(index=False), "report.csv", "text/csv")
+        
+        # Keep the download functionality
+        st.download_button("Download CSV", df.to_csv(index=False), f"report_{today_date}.csv", "text/csv")
     else:
         st.info("No one has marked attendance today.")
