@@ -31,7 +31,7 @@ db = firestore.client()
 # --- 3. Directory Setup & AI Model Loading ---
 DATA_DIR = "student_faces"
 os.makedirs(DATA_DIR, exist_ok=True)
-BD_TIMEZONE = pytz.timezone('Asia/Dhaka') # Bangladesh Timezone
+BD_TIMEZONE = pytz.timezone('Asia/Dhaka')
 
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 recognizer = cv2.face.LBPHFaceRecognizer_create()
@@ -43,14 +43,10 @@ choice = st.sidebar.radio("Navigation", ["🏠 Home", "📸 Take Attendance", "�
 # --- 5. Home Page ---
 if choice == "🏠 Home":
     st.title("📲 Smart Attendance System")
-    
-    # Date and Time Display
     now_bd = datetime.now(BD_TIMEZONE)
     st.markdown(f"**🇧🇩 Current Time:** `{now_bd.strftime('%I:%M %p')} | {now_bd.strftime('%d %b, %Y')}`")
-    
     st.markdown("---")
     st.subheader("How to Use This System")
-    
     col1, col2 = st.columns(2)
     
     with col1:
@@ -66,16 +62,14 @@ if choice == "🏠 Home":
                    "**How to log daily attendance:**\n"
                    "1. Click on **'Take Attendance'** from the menu.\n"
                    "2. Look straight into the camera when it opens.\n"
-                   "3. Wait for the **green success message** confirming your identity.\n"
-                   "4. Your attendance is automatically saved to the cloud database.")
-    
+                   "3. Wait for the **green success message**.\n"
+                   "4. Your attendance is automatically saved to the cloud.")
     st.markdown("---")
-    st.warning("📊 **For Admins:** Navigate to the **'Admin Dashboard'** to view today's complete attendance logs and export them as a CSV file.")
+    st.warning("📊 **For Admins:** Navigate to the **'Admin Dashboard'** to view today's complete attendance logs.")
 
 # --- 6. Student Registration ---
 elif choice == "👤 Register Student":
     st.header("Student Enrollment")
-    
     col1, col2 = st.columns(2)
     with col1:
         name = st.text_input("Full Name")
@@ -102,7 +96,6 @@ elif choice == "👤 Register Student":
 # --- 7. Take Attendance ---
 elif choice == "📸 Take Attendance":
     st.header("Attendance Scanner")
-    
     faces, ids, name_map = [], [], {}
     for file in os.listdir(DATA_DIR):
         if file.endswith(".jpg"):
@@ -127,52 +120,67 @@ elif choice == "📸 Take Attendance":
             
             for (x, y, w, h) in found_faces:
                 id_predicted, confidence = recognizer.predict(gray[y:y+h, x:x+w])
-                
-                # Lower confidence means a better match in LBPH
                 if confidence < 70:
                     student_name = name_map.get(id_predicted, "Unknown")
                     st.success(f"✅ Verified: {student_name}")
                     
-                    # Fetching Bangladesh Time
                     now_bd = datetime.now(BD_TIMEZONE)
                     today_date = now_bd.strftime('%Y-%m-%d')
                     current_time = now_bd.strftime('%I:%M:%S %p') 
                     
-                    # Save to Firebase
                     doc_id = f"{today_date}_{id_predicted}"
                     db.collection('attendance_logs').document(doc_id).set({
-                        "ID": id_predicted,
-                        "Name": student_name,
-                        "Date": today_date,
-                        "Time": current_time,
-                        "Timestamp": now_bd 
+                        "ID": id_predicted, "Name": student_name, "Date": today_date, 
+                        "Time": current_time, "Timestamp": now_bd 
                     })
                     st.toast(f"Attendance marked for {student_name}")
                 else:
                     st.error("Face not recognized! Please try again or register.")
 
-# --- 8. Admin Dashboard ---
+# --- 8. Admin Dashboard (WITH LOGIN SYSTEM) ---
 elif choice == "📊 Admin Dashboard":
     st.header("Daily Attendance Records")
     
-    now_bd = datetime.now(BD_TIMEZONE)
-    today_date = now_bd.strftime('%Y-%m-%d')
-    
-    # Read from Firebase
-    logs_ref = db.collection('attendance_logs').where("Date", "==", today_date).stream()
-    records = [doc.to_dict() for doc in logs_ref]
-    
-    # Metric Cards
-    col1, col2 = st.columns(2)
-    col1.metric("Present Today", len(records))
-    col2.metric("Date", now_bd.strftime('%d %b, %Y'))
+    # 1. Initialize session state for login
+    if 'admin_logged_in' not in st.session_state:
+        st.session_state.admin_logged_in = False
 
-    if records:
-        df = pd.DataFrame(records)[["ID", "Name", "Time"]]
-        st.dataframe(df, use_container_width=True)
+    # 2. Show Login Screen if NOT logged in
+    if not st.session_state.admin_logged_in:
+        st.warning("🔒 This section is restricted to Teachers and Admins only.")
+        password = st.text_input("Enter Admin Password", type="password")
         
-        # Download Button
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("Download CSV Report", data=csv, file_name=f"attendance_{today_date}.csv", mime='text/csv')
+        if st.button("Login"):
+            # Check password from Streamlit Secrets
+            if password == st.secrets["admin_password"]:
+                st.session_state.admin_logged_in = True
+                st.rerun()  # Refresh the page to show dashboard
+            else:
+                st.error("Incorrect password! Access Denied.")
+                
+    # 3. Show Dashboard if logged in
     else:
-        st.info("No attendance records found for today.")
+        st.success("✅ Logged in securely.")
+        if st.button("Logout", key="logout_btn"):
+            st.session_state.admin_logged_in = False
+            st.rerun()
+            
+        st.markdown("---")
+        now_bd = datetime.now(BD_TIMEZONE)
+        today_date = now_bd.strftime('%Y-%m-%d')
+        
+        logs_ref = db.collection('attendance_logs').where("Date", "==", today_date).stream()
+        records = [doc.to_dict() for doc in logs_ref]
+        
+        col1, col2 = st.columns(2)
+        col1.metric("Present Today", len(records))
+        col2.metric("Date", now_bd.strftime('%d %b, %Y'))
+
+        if records:
+            df = pd.DataFrame(records)[["ID", "Name", "Time"]]
+            st.dataframe(df, use_container_width=True)
+            
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button("Download CSV Report", data=csv, file_name=f"attendance_{today_date}.csv", mime='text/csv')
+        else:
+            st.info("No attendance records found for today.")
